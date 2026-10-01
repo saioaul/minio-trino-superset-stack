@@ -1,0 +1,250 @@
+# ---------------------------------------------------------------------------
+# Stack de Big Data para una prueba end-to-end:
+#
+#     CSV  ->  MinIO (data lake S3)  ->  Trino (SQL)  ->  Superset (grafico)
+#Ahora añado el servicio agent al compose y su puerto al .env.
+# Arrancar:  docker compose up -d
+# Estado:    docker compose ps
+# Logs:      docker compose logs -f <servicio>
+# Parar:     docker compose down          (conserva los volumenes)
+# Reset:     docker compose down -v       (borra los datos)
+# ---------------------------------------------------------------------------
+
+name: bigdata-stack
+
+services:
+
+  # -----------------------------------------------------------------------
+  # 1) MinIO - almacenamiento de objetos compatible con S3 (el "data lake")
+  #    Consola web: http://localhost:9001
+  #
+  #    IMPORTANTE: MinIO retiro sus imagenes oficiales (Docker Hub y Quay) y
+  #    archivo el proyecto: https://dl.min.io responde "410 Gone".
+  #    Usamos la rebuild mantenida por la comunidad pgsty (MinIO autentico,
+  #    RELEASE.2026-08-04, AGPLv3). Puedes cambiarla en .env -> MINIO_IMAGE.
+  # -----------------------------------------------------------------------
+  minio:
+    image: ${MINIO_IMAGE:-pgsty/minio:latest}
+    container_name: bigdata-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"      # API S3
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # Consola web
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 2) minio-init - crea el bucket y sube data/ventas.csv usando boto3.
+  #    Contenedor de un solo uso: reintenta hasta que MinIO responde.
+  # -----------------------------------------------------------------------
+  minio-init:
+    build:
+      context: ./minio_init
+    image: bigdata-minio-init:local
+    container_name: bigdata-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${MINIO_BUCKET:-ventas}
+      CSV_PATH: /data/ventas.csv
+      OBJECT_KEY: csv/ventas.csv
+    volumes:
+      - ./data:/data:ro
+    restart: "no"
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 3) PostgreSQL - base de datos de metadatos de Superset
+  # -----------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: bigdata-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-superset}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-superset}
+      POSTGRES_DB: ${POSTGRES_DB:-superset}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-superset} -d ${POSTGRES_DB:-superset}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 4a) trino-init-meta - prepara el directorio del metastore en disco.
+  #     El contenedor de Trino corre como uid 1000; aqui damos permisos
+  #     al volumen para que pueda escribir los metadatos.
+  # -----------------------------------------------------------------------
+  trino-init-meta:
+    image: busybox:latest
+    container_name: bigdata-trino-init-meta
+    user: root
+    command: ["sh", "-c", "mkdir -p /meta && chown -R 1000:1000 /meta"]
+    volumes:
+      - trino_metastore:/meta
+    restart: "no"
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 4b) Trino - motor SQL. Lee los CSV de MinIO con el conector Hive
+  #     configurado en trino/catalog/hive.properties.
+  #     UI/API: http://localhost:8080
+  # -----------------------------------------------------------------------
+  trino:
+    image: trinodb/trino:latest
+    container_name: bigdata-trino
+    depends_on:
+      minio:
+        condition: service_started
+      trino-init-meta:
+        condition: service_completed_successfully
+    ports:
+      - "${TRINO_PORT:-8080}:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+      - trino_metastore:/var/lib/trino/metastore
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 5) trino-init - crea el esquema y la tabla externa "ventas" apuntando
+  #    al CSV que minio-init dejo en el bucket.
+  # -----------------------------------------------------------------------
+  trino-init:
+    image: trinodb/trino:latest
+    container_name: bigdata-trino-init
+    depends_on:
+      trino:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./scripts/trino_init.sql:/tmp/trino_init.sql:ro
+      - ./scripts/trino_init.sh:/tmp/trino_init.sh:ro
+    entrypoint: ["/bin/sh", "/tmp/trino_init.sh"]
+    restart: "no"
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 6a) superset-init - migra la BD, crea el admin, registra la conexion a
+  #     Trino y el dataset. Contenedor de un solo uso.
+  # -----------------------------------------------------------------------
+  superset-init:
+    build:
+      context: ./superset
+      args:
+        SUPERSET_BASE: ${SUPERSET_IMAGE:-apache/superset:latest}
+    image: bigdata-superset:local
+    container_name: bigdata-superset-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_started
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-cambia-esta-clave}
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-superset}:${POSTGRES_PASSWORD:-superset}@postgres:5432/${POSTGRES_DB:-superset}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@example.com}
+      TRINO_SQLALCHEMY_URI: trino://admin@trino:8080/hive/default
+      SUPERSET_BOOTSTRAP: "1"
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./superset/init.sh:/app/init.sh:ro
+      - ./superset/bootstrap.py:/app/bootstrap.py:ro
+    entrypoint: ["/bin/sh", "/app/init.sh"]
+    restart: "no"
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 6b) superset - servidor web de BI.  http://localhost:8088
+  # -----------------------------------------------------------------------
+  superset:
+    build:
+      context: ./superset
+      args:
+        SUPERSET_BASE: ${SUPERSET_IMAGE:-apache/superset:latest}
+    image: bigdata-superset:local
+    container_name: bigdata-superset
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-cambia-esta-clave}
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:-superset}:${POSTGRES_PASSWORD:-superset}@postgres:5432/${POSTGRES_DB:-superset}
+      PYTHONPATH: /app/pythonpath
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+    networks:
+      - bigdata
+
+  # -----------------------------------------------------------------------
+  # 9) agent (BONUS) - web con un chat que genera el docker-compose.yml, lo
+  #    valida con "docker compose config" y lo prueba (lo levanta y lo baja).
+  #
+  #    Esta FUERA del arranque normal: usa un perfil para no consumir recursos
+  #    ni abrir el socket de Docker si no lo necesitas.
+  #
+  #      docker compose --profile agent up -d --build agent
+  #      -> http://localhost:8000
+  #
+  #    IMPORTANTE: se le monta el repositorio EN LA MISMA RUTA que tiene en el
+  #    host (${PWD}), porque el compose generado usa rutas relativas
+  #    (./trino/catalog, ./superset, ./data) que resuelve el demonio del host.
+  #    Arrancalo siempre desde la raiz del repositorio.
+  # -----------------------------------------------------------------------
+  agent:
+    profiles: ["agent"]
+    build:
+      context: ./agent
+    image: bigdata-agent:local
+    container_name: bigdata-agent
+    restart: unless-stopped
+    environment:
+      AGENT_REPO_ROOT: ${PWD}
+    ports:
+      - "${AGENT_PORT:-8000}:8000"
+    volumes:
+      # El agente necesita el demonio de Docker para validar y probar.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # El repositorio, en la misma ruta absoluta que en el host.
+      - ${PWD}:${PWD}
+    working_dir: ${PWD}
+    networks:
+      - bigdata
+
+networks:
+  bigdata:
+    driver: bridge
+
+volumes:
+  minio_data:
+  postgres_data:
+  trino_metastore:

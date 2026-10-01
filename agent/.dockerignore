@@ -1,0 +1,11 @@
+# Entornos virtuales locales (no deben entrar en la imagen)
+.venv/
+venv/
+
+# Bytes de Python
+__pycache__/
+*.py[cod]
+
+# Salidas del propio agente
+agent-generated-compose.yml
+agent-generated-report.md

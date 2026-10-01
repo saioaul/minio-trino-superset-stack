@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agente · docker-compose</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #131a2e;
+    --panel-2: #182040;
+    --texto: #e8ecf7;
+    --suave: #93a0c0;
+    --acento: #6d8cff;
+    --acento-2: #38e0c8;
+    --error: #ff6b81;
+    --ok: #3ddc97;
+    --borde: #24304f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, #1b2450 0%, var(--bg) 55%);
+    color: var(--texto);
+    min-height: 100vh;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--borde);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    backdrop-filter: blur(6px);
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--acento-2);
+    box-shadow: 0 0 12px var(--acento-2);
+  }
+  header .sub { color: var(--suave); font-size: 12px; margin-left: auto; }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) 1fr;
+    gap: 18px;
+    padding: 18px 24px 32px;
+    align-items: start;
+  }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--borde);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 18px 40px rgba(0,0,0,.35);
+  }
+  .panel h2 {
+    margin: 0; padding: 12px 16px;
+    font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--suave);
+    border-bottom: 1px solid var(--borde);
+    background: var(--panel-2);
+  }
+
+  #chat { height: 380px; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 88%; padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: linear-gradient(135deg, var(--acento), #8a6dff); }
+  .msg.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--borde); }
+  .msg.bot.err { border-color: var(--error); }
+
+  .entrada { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--borde); }
+  textarea {
+    flex: 1; resize: none; height: 66px;
+    background: #0d1327; color: var(--texto);
+    border: 1px solid var(--borde); border-radius: 10px;
+    padding: 10px; font-family: inherit; font-size: 14px;
+    outline: none;
+  }
+  textarea:focus { border-color: var(--acento); }
+
+  button {
+    background: linear-gradient(135deg, var(--acento), #8a6dff);
+    color: white; border: 0; border-radius: 10px;
+    padding: 10px 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.sec { background: #223056; border: 1px solid var(--borde); font-weight: 500; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
+  .chip {
+    font-size: 12px; color: var(--suave);
+    background: #0d1327; border: 1px solid var(--borde);
+    border-radius: 999px; padding: 5px 10px; cursor: pointer;
+  }
+  .chip:hover { color: var(--texto); border-color: var(--acento); }
+
+  .tabs { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--borde); background: var(--panel-2); }
+  .tab {
+    font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    color: var(--suave); border: 1px solid transparent;
+  }
+  .tab.activo { color: var(--texto); background: #223056; border-color: var(--borde); }
+
+  .salida { padding: 14px; min-height: 320px; }
+  pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
+    font-size: 12.5px; line-height: 1.55;
+  }
+  .oculto { display: none; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .badge.ok { background: rgba(61,220,151,.15); color: var(--ok); }
+  .badge.err { background: rgba(255,107,129,.15); color: var(--error); }
+  .acciones { display: flex; gap: 8px; padding: 0 14px 14px; }
+  .md h3 { margin: 14px 0 6px; font-size: 14px; }
+  .md ul { margin: 6px 0; padding-left: 20px; }
+  .md li { margin: 3px 0; font-size: 13.5px; }
+  .md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  .md th, .md td { border: 1px solid var(--borde); padding: 5px 10px; text-align: left; }
+  .spinner { display:inline-block; width:12px; height:12px; border:2px solid #ffffff55; border-top-color:#fff; border-radius:50%; animation: giro .7s linear infinite; }
+  @keyframes giro { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span>
+  <h1>Agente generador de <code>docker-compose.yml</code></h1>
+  <span class="sub">reglas + plantillas · sin claves de API</span>
+</header>
+
+<main>
+  <!-- Conversacion -->
+  <section class="panel">
+    <h2>Conversacion</h2>
+    <div id="chat"></div>
+    <div class="chips" id="chips"></div>
+    <div class="entrada">
+      <textarea id="prompt" placeholder="Describe el stack que necesitas..."></textarea>
+      <button id="enviar">Generar</button>
+    </div>
+  </section>
+
+  <!-- Resultado -->
+  <section class="panel">
+    <div class="tabs">
+      <div class="tab activo" data-tab="yaml">docker-compose.yml</div>
+      <div class="tab" data-tab="informe">Informe</div>
+      <div class="tab" data-tab="validacion">Validacion</div>
+    </div>
+    <div class="salida">
+      <pre id="vista-yaml" class="oculto"></pre>
+      <div id="vista-informe" class="md oculto"></div>
+      <pre id="vista-validacion" class="oculto"></pre>
+    </div>
+    <div class="acciones">
+      <button class="sec" id="validar" disabled>Validar</button>
+      <button class="sec" id="probar" disabled>Probar (levanta y baja el stack)</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const chat = document.getElementById("chat");
+const prompt = document.getElementById("prompt");
+const enviar = document.getElementById("enviar");
+const botonValidar = document.getElementById("validar");
+const botonProbar = document.getElementById("probar");
+const chips = document.getElementById("chips");
+
+let yamlActual = "";
+
+function burbuja(texto, clase) {
+  const div = document.createElement("div");
+  div.className = "msg " + clase;
+  div.textContent = texto;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function mostrarTab(nombre) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("activo", t.dataset.tab === nombre));
+  document.getElementById("vista-yaml").classList.toggle("oculto", nombre !== "yaml");
+  document.getElementById("vista-informe").classList.toggle("oculto", nombre !== "informe");
+  document.getElementById("vista-validacion").classList.toggle("oculto", nombre !== "validacion");
+}
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => mostrarTab(t.dataset.tab)));
+
+// Markdown minimo: titulos, listas y tablas
+function markdown(texto) {
+  const lineas = texto.split("\n");
+  let html = "", enLista = false, enTabla = false;
+  const cerrar = () => { if (enLista) { html += "</ul>"; enLista = false; } if (enTabla) { html += "</table>"; enTabla = false; } };
+
+  for (const linea of lineas) {
+    const t = linea.trim();
+    if (/^\|(.+)\|$/.test(t)) {
+      const celdas = t.slice(1, -1).split("|").map(c => c.trim());
+      if (celdas.every(c => /^-+$/.test(c))) continue;
+      if (!enTabla) { cerrar(); html += "<table>"; enTabla = true;
+        html += "<tr>" + celdas.map(c => `<th>${c}</th>`).join("") + "</tr>"; }
+      else html += "<tr>" + celdas.map(c => `<td>${c}</td>`).join("") + "</tr>";
+      continue;
+    }
+    if (/^###\s+/.test(t)) { cerrar(); html += `<h3>${t.replace(/^###\s+/, "")}</h3>`; continue; }
+    if (/^##\s+/.test(t)) { cerrar(); html += `<h3>${t.replace(/^##\s+/, "")}</h3>`; continue; }
+    if (/^[-*]\s+/.test(t)) { if (!enLista) { cerrar(); html += "<ul>"; enLista = true; } html += `<li>${t.replace(/^[-*]\s+/, "")}</li>`; continue; }
+    if (t === "") { cerrar(); continue; }
+    cerrar(); html += `<p>${t}</p>`;
+  }
+  cerrar();
+  return html;
+}
+
+async function llamar(url, cuerpo) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cuerpo)
+  });
+  return r.json();
+}
+
+async function generar(texto) {
+  burbuja(texto, "user");
+  const esperando = burbuja("Pensando...", "bot");
+  enviar.disabled = true;
+
+  try {
+    const datos = await llamar("/api/generate", { prompt: texto });
+    yamlActual = datos.yaml;
+    document.getElementById("vista-yaml").textContent = datos.yaml;
+    document.getElementById("vista-informe").innerHTML = markdown(datos.informe);
+    document.getElementById("vista-validacion").textContent =
+      (datos.validacion.ok ? "VALIDA\n\n" : "ERRORES\n\n") + (datos.validacion.salida || "sin salida");
+
+    esperando.textContent =
+      "Generado " + datos.fichero +
+      "\nValidacion: " + (datos.validacion.ok ? "correcta" : "con errores") +
+      "\nServicios: " + (datos.yaml.match(/^  [a-z-]+:/gm) || []).join(" ").replace(/^ {2}/gm, "").replace(/:$/gm, "").trim();
+
+    botonValidar.disabled = false;
+    botonProbar.disabled = false;
+    mostrarTab("yaml");
+  } catch (e) {
+    esperando.classList.add("err");
+    esperando.textContent = "Error: " + e.message;
+  } finally {
+    enviar.disabled = false;
+  }
+}
+
+enviar.addEventListener("click", () => {
+  const texto = prompt.value.trim();
+  if (texto) { prompt.value = ""; generar(texto); }
+});
+prompt.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar.click(); }
+});
+
+botonValidar.addEventListener("click", async () => {
+  if (!yamlActual) return;
+  botonValidar.disabled = true;
+  const datos = await llamar("/api/validate", { yaml: yamlActual });
+  document.getElementById("vista-validacion").textContent =
+    (datos.ok ? "VALIDA\n\n" : "ERRORES\n\n") + (datos.salida || "sin salida");
+  botonValidar.disabled = false;
+  mostrarTab("validacion");
+});
+
+botonProbar.addEventListener("click", async () => {
+  if (!yamlActual) return;
+  if (!confirm("Se va a levantar el stack generado (descarga imagenes) y despues se bajara. Puede tardar varios minutos. ¿Continuar?")) return;
+  botonProbar.disabled = true;
+  const original = botonProbar.textContent;
+  botonProbar.innerHTML = '<span class="spinner"></span> Probando...';
+
+  const datos = await llamar("/api/test", { yaml: yamlActual, timeout: 900 });
+  const pasos = datos.pasos || [];
+  let resumen = pasos.map(p => `# ${p.paso} (codigo ${p.codigo})\n${p.salida || "(sin salida)"}`).join("\n\n");
+  if (datos.motivo) resumen = datos.motivo + (resumen ? "\n\n" + resumen : "");
+  if (!resumen) resumen = "(sin salida)";
+  document.getElementById("vista-validacion").textContent =
+    (datos.ok ? "PRUEBA CORRECTA\n\n" : "PRUEBA CON FALLOS\n\n") + resumen;
+
+  botonProbar.textContent = original;
+  botonProbar.disabled = false;
+  mostrarTab("validacion");
+});
+
+fetch("/api/ejemplos").then(r => r.json()).then(d => {
+  d.ejemplos.forEach(e => {
+    const c = document.createElement("span");
+    c.className = "chip";
+    c.textContent = e;
+    c.onclick = () => generar(e);
+    chips.appendChild(c);
+  });
+});
+
+burbuja("Hola. Describe el stack que quieres montar y te genero el docker-compose.yml, lo valido y te doy un informe.", "bot");
+</script>
+</body>
+</html>

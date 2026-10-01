@@ -1,0 +1,20 @@
+# Credenciales locales
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Superset
+superset_home/
+*.db
+
+# Salidas de pruebas
+reports/
+*.log
+
+# Salidas del agente
+agent-generated-compose.yml
+agent-generated-report.md

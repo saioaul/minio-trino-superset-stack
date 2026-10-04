@@ -24,9 +24,9 @@ trino --server "$SERVER" --file /tmp/trino_init.sql
 
 echo "[trino-init] Comprobando lectura del CSV desde MinIO:"
 trino --server "$SERVER" --execute \
-  "SELECT ciudad, count(*) AS filas, sum(importe) AS importe_total
-     FROM hive.default.ventas_tipadas
-    GROUP BY ciudad
-    ORDER BY importe_total DESC"
+  "SELECT zona, count(*) AS playas, sum(longitud_m) AS metros_totales
+     FROM hive.default.playas_tipadas
+    GROUP BY zona
+    ORDER BY playas DESC"
 
 echo "[trino-init] Hecho."

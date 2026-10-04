@@ -96,8 +96,9 @@ BLOQUE_MINIO_INIT = """  minio-init:
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-%(minio_user)s}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-%(minio_password)s}
       S3_BUCKET: ${MINIO_BUCKET:-%(bucket)s}
-      CSV_PATH: /data/ventas.csv
-      OBJECT_KEY: csv/ventas.csv
+      CSV_PATH: /data/playas_Asturias.csv
+      OBJECT_KEY: csv/playas_Asturias.csv
+      CSV_SOURCE_ENCODING: latin-1
     volumes:
       - ./data:/data:ro
     restart: "no"
@@ -334,7 +335,7 @@ def build_context(prompt: str, servicios: List[str]) -> Dict[str, object]:
         "minio_image": "pgsty/minio:latest",
         "minio_user": "admin",
         "minio_password": "minioadmin",
-        "bucket": "ventas",
+        "bucket": "playas",
         "minio_api_port": puertos.get("minio", {}).get("api", 9000),
         "minio_console_port": puertos.get("minio", {}).get("consola", 9001),
         "postgres_user": "superset",

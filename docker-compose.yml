@@ -45,7 +45,7 @@ services:
       - bigdata
 
   # -----------------------------------------------------------------------
-  # 2) minio-init - crea el bucket y sube data/ventas.csv usando boto3.
+  # 2) minio-init - crea el bucket y sube data/playas_Asturias.csv usando boto3.
   #    Contenedor de un solo uso: reintenta hasta que MinIO responde.
   # -----------------------------------------------------------------------
   minio-init:
@@ -60,9 +60,12 @@ services:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      S3_BUCKET: ${MINIO_BUCKET:-ventas}
-      CSV_PATH: /data/ventas.csv
-      OBJECT_KEY: csv/ventas.csv
+      S3_BUCKET: ${MINIO_BUCKET:-playas}
+      CSV_PATH: /data/playas_Asturias.csv
+      OBJECT_KEY: csv/playas_Asturias.csv
+      # El CSV de origen esta en ISO-8859-1 (Latin-1); se sube convertido a UTF-8
+      # para que el SerDe CSV de Hive (que asume UTF-8) no destroce los acentos.
+      CSV_SOURCE_ENCODING: latin-1
     volumes:
       - ./data:/data:ro
     restart: "no"
@@ -129,7 +132,7 @@ services:
       - bigdata
 
   # -----------------------------------------------------------------------
-  # 5) trino-init - crea el esquema y la tabla externa "ventas" apuntando
+  # 5) trino-init - crea el esquema y la tabla externa "playas" apuntando
   #    al CSV que minio-init dejo en el bucket.
   # -----------------------------------------------------------------------
   trino-init:
@@ -176,6 +179,7 @@ services:
       - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
       - ./superset/init.sh:/app/init.sh:ro
       - ./superset/bootstrap.py:/app/bootstrap.py:ro
+      - ./superset/create_dashboard.py:/app/create_dashboard.py:ro
     entrypoint: ["/bin/sh", "/app/init.sh"]
     restart: "no"
     networks:

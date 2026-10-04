@@ -19,10 +19,13 @@ from botocore.exceptions import ClientError
 ENDPOINT = os.environ.get("S3_ENDPOINT", "http://minio:9000")
 ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "admin")
 SECRET_KEY = os.environ.get("S3_SECRET_KEY", "minioadmin")
-BUCKET = os.environ.get("S3_BUCKET", "ventas")
+BUCKET = os.environ.get("S3_BUCKET", "playas")
 REGION = os.environ.get("S3_REGION", "us-east-1")
-CSV_PATH = os.environ.get("CSV_PATH", "/data/ventas.csv")
-OBJECT_KEY = os.environ.get("OBJECT_KEY", "csv/ventas.csv")
+CSV_PATH = os.environ.get("CSV_PATH", "/data/playas_Asturias.csv")
+OBJECT_KEY = os.environ.get("OBJECT_KEY", "csv/playas_Asturias.csv")
+# Codificacion del CSV de origen. El SerDe CSV de Hive asume UTF-8, asi que si
+# el fichero viene en Latin-1 lo convertimos al subirlo (ver `subir_csv`).
+CSV_SOURCE_ENCODING = os.environ.get("CSV_SOURCE_ENCODING", "utf-8")
 ESPERA_MAXIMA = int(os.environ.get("ESPERA_MAXIMA", "300"))
 INTERVALO_REINTENTO = float(os.environ.get("INTERVALO_REINTENTO", "2"))
 
@@ -106,7 +109,25 @@ def asegurar_bucket(s3) -> None:
 def subir_csv(s3) -> None:
     if not os.path.isfile(CSV_PATH):
         raise SystemExit(f"[minio-init] ERROR: no existe {CSV_PATH}")
-    s3.upload_file(CSV_PATH, BUCKET, OBJECT_KEY)
+
+    # El SerDe CSV de Hive (OpenCSVSerde) asume UTF-8. Si el CSV de origen esta
+    # en otra codificacion (p.ej. Latin-1), los acentos se corrompen. Lo leemos
+    # con su codificacion real y lo subimos siempre en UTF-8.
+    with open(CSV_PATH, "r", encoding=CSV_SOURCE_ENCODING, newline="") as fichero:
+        contenido = fichero.read()
+
+    if CSV_SOURCE_ENCODING.lower().replace("_", "-") not in {"utf-8", "utf8"}:
+        print(
+            f"[minio-init] Convirtiendo {CSV_PATH} de {CSV_SOURCE_ENCODING} a UTF-8.",
+            flush=True,
+        )
+
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=OBJECT_KEY,
+        Body=contenido.encode("utf-8"),
+        ContentType="text/csv; charset=utf-8",
+    )
     print(f"[minio-init] Subido {CSV_PATH} -> s3://{BUCKET}/{OBJECT_KEY}", flush=True)
 
 

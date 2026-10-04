@@ -1,12 +1,12 @@
 """
 Registra en Superset:
   * la conexion SQLAlchemy a Trino  (trino://admin@trino:8080/hive/default)
-  * el dataset "hive.default.ventas_tipadas"
+  * el dataset "hive.default.playas_tipadas"
 
-Se usa la VISTA ventas_tipadas, no la tabla cruda: el SerDe CSV de Hive
+Se usa la VISTA playas_tipadas, no la tabla cruda: el SerDe CSV de Hive
 devuelve todas las columnas como texto, y la vista ya las convierte a
-date / bigint / double. Asi Superset ve "importe" como numero y puede
-ofrecer la metrica SUM(importe) sin escribir SQL a mano.
+boolean / bigint. Asi Superset ve "longitud_m" como numero y puede
+ofrecer la metrica SUM(longitud_m) sin escribir SQL a mano.
 
 Es idempotente: si ya existen, no hace nada.
 Se ejecuta dentro del contenedor superset-init.
@@ -14,6 +14,7 @@ Se ejecuta dentro del contenedor superset-init.
 
 import os
 import sys
+import time
 import traceback
 
 TRINO_URI = os.environ.get(
@@ -21,7 +22,42 @@ TRINO_URI = os.environ.get(
 )
 DB_NAME = os.environ.get("SUPERSET_TRINO_DB_NAME", "Trino (MinIO)")
 SCHEMA = os.environ.get("SUPERSET_TRINO_SCHEMA", "default")
-TABLE = os.environ.get("SUPERSET_TRINO_TABLE", "ventas_tipadas")
+TABLE = os.environ.get("SUPERSET_TRINO_TABLE", "playas_tipadas")
+
+
+def fetch_columns_with_retry(table, attempts: int = 20, delay: int = 3) -> None:
+    """Lee las columnas desde Trino y las persiste, reintentando.
+
+    Trino puede aceptar la conexion TCP y aun asi responder
+    SERVER_STARTING_UP a las consultas. Reintentamos hasta que responda.
+    """
+    from superset import db
+
+    last_error: Exception | None = None
+    for intento in range(1, attempts + 1):
+        try:
+            result = table.fetch_metadata()
+            db.session.commit()
+            print(
+                "[bootstrap] Columnas anadidas: "
+                f"{result.added or 'ninguna'} | "
+                f"modificadas: {result.modified or 'ninguna'} | "
+                f"eliminadas: {result.removed or 'ninguna'}"
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 - queremos reintentar cualquier fallo
+            last_error = exc
+            db.session.rollback()
+            print(
+                f"[bootstrap] Intento {intento}/{attempts} de leer columnas "
+                f"fallido: {exc}"
+            )
+            time.sleep(delay)
+
+    raise RuntimeError(
+        f"No se pudieron leer las columnas de {SCHEMA}.{TABLE} tras "
+        f"{attempts} intentos"
+    ) from last_error
 
 
 def main() -> None:
@@ -67,9 +103,20 @@ def main() -> None:
             db.session.add(table)
             db.session.commit()
             print(f"[bootstrap] Dataset '{SCHEMA}.{TABLE}' creado.")
+        else:
+            print(f"[bootstrap] El dataset '{SCHEMA}.{TABLE}' ya existia.")
+
+        # --- 3. Columnas --------------------------------------------------
+        # Se leen SIEMPRE (no solo al crear el dataset): asi se arregla un
+        # dataset que se quedo sin columnas porque Trino aun no estaba listo.
+        if table.columns:
+            print(
+                "[bootstrap] El dataset ya tiene columnas: "
+                + ", ".join(column.column_name for column in table.columns)
+            )
+        else:
             print("[bootstrap] Leyendo columnas desde Trino ...")
-            table.fetch_metadata()
-            db.session.commit()
+            fetch_columns_with_retry(table)
 
         columnas = ", ".join(column.column_name for column in table.columns)
         print(f"[bootstrap] Columnas del dataset: {columnas}")

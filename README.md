@@ -8,7 +8,7 @@ a partir de una conversación.
 
 ```mermaid
 flowchart LR
-    A[data/ventas.csv] -->|boto3 put_object| B[(MinIO<br/>bucket: ventas)]
+    A[data/playas_Asturias.csv] -->|boto3 put_object| B[(MinIO<br/>bucket: playas)]
     B -->|conector Hive + S3| C[Trino<br/>:8080]
     C -->|SQLAlchemy trino://| D[Superset<br/>:8088]
     E[(PostgreSQL<br/>:5432)] -->|metadatos| D
@@ -128,18 +128,19 @@ ventaja de diseño: funciona igual contra **cualquier** backend compatible con S
 bigdata-stack/
 ├── docker-compose.yml            # el stack completo
 ├── .env / .env.example           # credenciales y puertos
-├── data/ventas.csv               # el CSV de origen
+├── data/playas_Asturias.csv      # el CSV de origen (playas de Asturias)
 ├── trino/catalog/hive.properties # conector Hive -> MinIO
 ├── superset/
 │   ├── Dockerfile                # imagen base + drivers "trino" y "psycopg2"
 │   ├── superset_config.py        # configuración (SECRET_KEY, BD, ...)
 │   ├── init.sh                   # migra BD, crea admin, registra Trino
-│   └── bootstrap.py              # crea la conexión y el dataset
+│   ├── bootstrap.py              # crea la conexión y el dataset
+│   └── create_dashboard.py       # crea el dashboard con 3 gráficos
 ├── minio_init/                   # inicializa el data lake (sin mc)
 │   ├── Dockerfile                # python:3.12-alpine + boto3
 │   └── init.py                   # crea el bucket y sube el CSV
 ├── scripts/
-│   ├── trino_init.sql            # tabla externa "ventas" + vista "ventas_tipadas"
+│   ├── trino_init.sql            # tabla externa "playas" + vista "playas_tipadas"
 │   ├── trino_init.sh             # ejecuta el SQL anterior
 │   └── e2e_test.sh               # prueba end-to-end
 └── agent/                        # BONUS: agente web
@@ -178,10 +179,10 @@ Los tres contenedores `*-init` deben terminar con estado `Exited (0)`. Cuando
 
 | Contenedor | Qué hace |
 | --- | --- |
-| `minio-init` | Con **boto3**: espera a MinIO, crea el bucket `ventas` y sube `data/ventas.csv` a `s3://ventas/csv/ventas.csv` |
+| `minio-init` | Con **boto3**: espera a MinIO, crea el bucket `playas` y sube `data/playas_Asturias.csv` a `s3://playas/csv/playas_Asturias.csv` (convirtiendo de Latin-1 a UTF-8) |
 | `trino-init-meta` | Da permisos al volumen del metastore (Trino corre como uid 1000) |
-| `trino-init` | Crea el esquema `hive.default`, la **tabla externa** `ventas` y la **vista** `ventas_tipadas` |
-| `superset-init` | `db upgrade` + usuario admin + registra la conexión Trino y el dataset `ventas_tipadas` |
+| `trino-init` | Crea el esquema `hive.default`, la **tabla externa** `playas` y la **vista** `playas_tipadas` |
+| `superset-init` | `db upgrade` + usuario admin + registra la conexión Trino, el dataset `playas_tipadas` y un **dashboard con 3 gráficos** |
 
 > `hive.properties` lleva las credenciales de MinIO **escritas a mano** (Trino no
 > sustituye variables de entorno ahí). Si cambias `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`
@@ -198,11 +199,13 @@ Los tres contenedores `*-init` deben terminar con estado `Exited (0)`. Cuando
    `IllegalArgumentException: No factory for location: file:///var/lib/trino/metastore`.
    El esquema `file://` lo resuelve el `LocalFileSystem` de Hadoop; el esquema
    `local://` (otra cosa) lo resuelve `fs.local.enabled`.
-3. **El SerDe CSV de Hive solo admite `varchar`.** Declarar `fecha date`,
-   `unidades bigint` o `importe double` en el `CREATE TABLE` falla con
+3. **El SerDe CSV de Hive solo admite `varchar`.** Declarar `longitud_m bigint`
+   en el `CREATE TABLE` falla con
    `Hive CSV storage format only supports VARCHAR (unbounded)`. Por eso la tabla
-   `ventas` es **todo texto** y la conversión se hace en la vista `ventas_tipadas`.
-   Así Superset además detecta los tipos correctos (`DATE`, `BIGINT`, `DOUBLE`).
+   `playas` es **todo texto** y la conversión se hace en la vista `playas_tipadas`.
+   Así Superset además detecta los tipos correctos (`BOOLEAN`, `BIGINT`).
+   Además, el CSV de origen usa `;` como separador (se indica con `csv_separator=';'`)
+   y codificación **Latin-1**, que `minio-init` convierte a UTF-8 al subirlo.
 4. **La imagen oficial de Superset no tiene `pip` en su entorno virtual.** Corre
    desde `/app/.venv`, creado con `uv` y sin `pip`. Un `pip install trino` instala
    en el Python del sistema y Superset **nunca** ve el paquete. Hay que usar
@@ -225,29 +228,51 @@ Trino y Superset con el dataset creado. Verificación manual rápida:
 ```bash
 # Trino: consulta el CSV que vive en MinIO
 docker compose exec trino trino --execute \
-  "SELECT ciudad, sum(importe) AS total FROM hive.default.ventas_tipadas GROUP BY ciudad ORDER BY total DESC"
+  "SELECT zona, count(*) AS playas, sum(longitud_m) AS metros_totales FROM hive.default.playas_tipadas GROUP BY zona ORDER BY playas DESC"
 ```
 
-Salida esperada (los tres municipios del CSV):
+Salida esperada (resumen por zona):
 
 ```
-"Vitoria","3575.0"
-"Donostia","3300.0"
-"Bilbao","1630.0"
+"Occidente de Asturias","...","..."
+"Oriente de Asturias","...","..."
+"Centro de Asturias","...","..."
 ```
 
-## Paso 4 · Crear el gráfico en Superset
+## Paso 4 · El dashboard (se crea solo)
+
+Al levantar el stack, `superset-init` ejecuta `superset/create_dashboard.py`, que
+crea automáticamente un dashboard llamado **«Playas de Asturias»** con **3 gráficos
+de distinto tipo** sobre el dataset `playas_tipadas`:
+
+| Gráfico | Tipo | Configuración |
+| --- | --- | --- |
+| Playas por zona (barras) | Barras (`echarts_timeseries_bar`) | eje X `zona`, métrica `COUNT(nombre)` |
+| Playas por tipo (tarta) | Tarta (`pie`) | dimensión `tipo_playa`, métrica `COUNT(nombre)` |
+| Longitud total (metros) | Big Number (`big_number_total`) | métrica `SUM(longitud_m)` |
+
+Ábrelo en http://localhost:8088/superset/dashboard/2/ (`admin` / `admin`).
+
+El script es **idempotente**: si el dashboard o los gráficos ya existen (mismo
+nombre), no los duplica; solo se asegura de que estén enlazados al dashboard. Para
+volver a ejecutarlo a mano:
+
+```bash
+docker exec bigdata-superset python /app/create_dashboard.py
+```
+
+### Crear un gráfico a mano (alternativa)
 
 1. Entra en http://localhost:8088 (`admin` / `admin`).
-2. **Datasets** → verás `ventas_tipadas` (si no aparece, pulsa ⟳ o usa **+ Dataset**
-   con database `Trino (MinIO)`, schema `default`, tabla `ventas_tipadas`).
-   Usa la **vista** `ventas_tipadas`, no la tabla `ventas`: la tabla expone todas las
-   columnas como texto y Superset no podrá sumar `importe`.
-3. **Charts → + Chart** → dataset `ventas_tipadas`.
+2. **Datasets** → verás `playas_tipadas` (si no aparece, pulsa ⟳ o usa **+ Dataset**
+   con database `Trino (MinIO)`, schema `default`, tabla `playas_tipadas`).
+   Usa la **vista** `playas_tipadas`, no la tabla `playas`: la tabla expone todas las
+   columnas como texto y Superset no podrá sumar `longitud_m`.
+3. **Charts → + Chart** → dataset `playas_tipadas`.
 4. Tipo de gráfico **Bar Chart** (o Pie Chart).
 5. Configúralo:
-   - **Dimensions**: `ciudad`
-   - **Metrics**: `SUM(importe)` (añádela como métrica simple)
+   - **Dimensions**: `zona`
+   - **Metrics**: `COUNT(nombre)` (añádela como métrica simple)
 6. **Create chart** → **Save**. Añádelo a un dashboard con **Save → Add to dashboard**.
 
 🎉 Con eso tienes el flujo completo: **CSV → MinIO → Trino → gráfico en Superset**.
@@ -340,10 +365,12 @@ docker compose --profile agent down      # para el stack + el agente
 | `No factory for location: file:///...` | Falta `fs.hadoop.enabled=true` en `trino/catalog/hive.properties` |
 | `Hive CSV storage format only supports VARCHAR` | El SerDe CSV solo admite texto. Declara `varchar` y convierte en una vista |
 | `minio-init` falla con `503 XMinioServerNotInitialized` | Volumen `minio_data` corrupto o de otra imagen: `docker compose down -v` y relanza |
-| `Table 'hive.default.ventas' does not exist` | Revisa `docker compose logs trino-init`; asegúrate de que `minio-init` acabó con código 0 |
+| `Table 'hive.default.playas' does not exist` | Revisa `docker compose logs trino-init`; asegúrate de que `minio-init` acabó con código 0 |
 | Trino: `Access Denied` / `S3Exception` | Credenciales de `trino/catalog/hive.properties` distintas de las de MinIO |
 | `superset-init` falla con `No module named 'psycopg2'` (o `trino`) | Un `pip install` normal no toca el venv de Superset. Reconstruye: `docker compose build --no-cache superset` |
 | Superset no arranca y `superset-init` falla | Revisa `docker compose logs superset-init` (suele ser PostgreSQL aún no listo) |
+| El dataset `playas_tipadas` aparece **sin columnas** | `superset-init` leyó los metadatos antes de que Trino estuviera listo (`SERVER_STARTING_UP`). `init.sh` ya espera a que Trino ejecute `SELECT 1`, y `bootstrap.py` reintenta. Para arreglarlo sin recrear: `docker exec bigdata-superset python /app/bootstrap.py` |
+| El dashboard no aparece tras levantar el stack | Revisa `docker compose logs superset-init`; el script avisa con `AVISO: no se pudo crear el dashboard`. Relánzalo con `docker exec bigdata-superset python /app/create_dashboard.py` |
 | `permission denied` al escribir el metastore | El contenedor `trino-init-meta` debe terminar OK antes de Trino |
 | Superset no conecta a Trino | Comprueba el driver **dentro del venv**: `docker exec bigdata-superset /app/.venv/bin/python -c "import trino, psycopg2; print('ok')"` |
 | `minio-init` no ve el CSV | Debe acabar con `Exited (0)`. Si no, `docker compose logs minio-init` |

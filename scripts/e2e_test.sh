@@ -19,7 +19,7 @@ fi
 
 TRINO_PORT="${TRINO_PORT:-8080}"
 SUPERSET_PORT="${SUPERSET_PORT:-8088}"
-BUCKET="${MINIO_BUCKET:-ventas}"
+BUCKET="${MINIO_BUCKET:-playas}"
 
 OK=0
 FALLOS=0
@@ -42,26 +42,26 @@ paso "2/4  MinIO: el CSV esta en el bucket ${BUCKET}"
 # Se reutiliza el contenedor minio-init: es idempotente y ya imprime el listado.
 LISTADO=$(docker compose run --rm --no-deps minio-init 2>&1)
 echo "$LISTADO" | sed 's/^/    /'
-if echo "$LISTADO" | grep -q 'csv/ventas.csv'; then
-  bien "El objeto csv/ventas.csv esta en MinIO."
+if echo "$LISTADO" | grep -q 'csv/playas_Asturias.csv'; then
+  bien "El objeto csv/playas_Asturias.csv esta en MinIO."
 else
-  mal "No se encuentra csv/ventas.csv en el bucket."
+  mal "No se encuentra csv/playas_Asturias.csv en el bucket."
 fi
 
 # ---------------------------------------------------------------------------
 paso "3/4  Trino: lectura del CSV via SQL"
 TOTAL=$(docker compose exec -T trino trino --execute \
-  "SELECT count(*) FROM hive.default.ventas_tipadas" 2>&1 | tr -d '"[:space:]')
+  "SELECT count(*) FROM hive.default.playas_tipadas" 2>&1 | tr -d '"[:space:]')
 if [ "${TOTAL:-0}" -gt 0 ] 2>/dev/null; then
   bien "Trino lee ${TOTAL} filas desde MinIO."
 else
   mal "Trino no ha podido leer la tabla. Salida: ${TOTAL}"
 fi
 
-echo "  Resumen por ciudad:"
+echo "  Resumen por zona:"
 docker compose exec -T trino trino --execute \
-  "SELECT ciudad, count(*) AS filas, sum(importe) AS importe_total
-     FROM hive.default.ventas_tipadas GROUP BY ciudad ORDER BY importe_total DESC" 2>&1 \
+  "SELECT zona, count(*) AS playas, sum(longitud_m) AS metros_totales
+     FROM hive.default.playas_tipadas GROUP BY zona ORDER BY playas DESC" 2>&1 \
   | sed 's/^/    /'
 
 # ---------------------------------------------------------------------------
@@ -77,18 +77,18 @@ if docker exec bigdata-superset python -c \
 with app.app_context():
     from superset import db
     from superset.connectors.sqla.models import SqlaTable
-    n = db.session.query(SqlaTable).filter_by(table_name='ventas_tipadas').count()
+    n = db.session.query(SqlaTable).filter_by(table_name='playas_tipadas').count()
     sys.exit(0 if n else 1)" >/dev/null 2>&1; then
-  bien "El dataset 'ventas_tipadas' existe en Superset."
+  bien "El dataset 'playas_tipadas' existe en Superset."
 else
-  mal "El dataset 'ventas_tipadas' no existe (crea la conexion y el dataset a mano en la UI)."
+  mal "El dataset 'playas_tipadas' no existe (crea la conexion y el dataset a mano en la UI)."
 fi
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1m--- Resumen ---\033[0m\n'
 printf '  Comprobaciones OK : %d\n' "$OK"
 printf '  Fallos            : %d\n' "$FALLOS"
-printf '\n  Siguiente paso: crea el grafico en http://localhost:%s\n' "$SUPERSET_PORT"
-printf '    (Datasets > ventas_tipadas > Create chart)\n\n'
+printf '\n  Siguiente paso: abre el dashboard en http://localhost:%s\n' "$SUPERSET_PORT"
+printf '    (Dashboards > Playas de Asturias)\n\n'
 
 [ "$FALLOS" -eq 0 ]

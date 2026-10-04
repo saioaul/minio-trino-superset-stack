@@ -12,7 +12,7 @@ no los duplica; solo se asegura de que esten enlazados al dashboard.
 
 Se ejecuta dentro del contenedor superset-init (o a mano con):
 
-    docker exec bigdata-superset python /app/create_dashboard.py
+    docker compose exec superset python /app/create_dashboard.py
 """
 
 import json

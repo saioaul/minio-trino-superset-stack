@@ -8,9 +8,13 @@
 # Logs:      docker compose logs -f <servicio>
 # Parar:     docker compose down          (conserva los volumenes)
 # Reset:     docker compose down -v       (borra los datos)
+#
+# NOTA: el nombre del proyecto es configurable (COMPOSE_PROJECT_NAME en .env).
+# Asi puedes clonar el repo en otra carpeta y levantar un segundo stack sin
+# que choquen contenedores, volumenes ni red. Solo cambia tambien los puertos.
 # ---------------------------------------------------------------------------
 
-name: bigdata-stack
+name: ${COMPOSE_PROJECT_NAME:-bigdata-stack}
 
 services:
 
@@ -25,7 +29,6 @@ services:
   # -----------------------------------------------------------------------
   minio:
     image: ${MINIO_IMAGE:-pgsty/minio:latest}
-    container_name: bigdata-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
@@ -52,7 +55,6 @@ services:
     build:
       context: ./minio_init
     image: bigdata-minio-init:local
-    container_name: bigdata-minio-init
     depends_on:
       minio:
         condition: service_started
@@ -77,7 +79,6 @@ services:
   # -----------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
-    container_name: bigdata-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-superset}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-superset}
@@ -101,7 +102,6 @@ services:
   # -----------------------------------------------------------------------
   trino-init-meta:
     image: busybox:latest
-    container_name: bigdata-trino-init-meta
     user: root
     command: ["sh", "-c", "mkdir -p /meta && chown -R 1000:1000 /meta"]
     volumes:
@@ -117,7 +117,6 @@ services:
   # -----------------------------------------------------------------------
   trino:
     image: trinodb/trino:latest
-    container_name: bigdata-trino
     depends_on:
       minio:
         condition: service_started
@@ -137,7 +136,6 @@ services:
   # -----------------------------------------------------------------------
   trino-init:
     image: trinodb/trino:latest
-    container_name: bigdata-trino-init
     depends_on:
       trino:
         condition: service_started
@@ -161,7 +159,6 @@ services:
       args:
         SUPERSET_BASE: ${SUPERSET_IMAGE:-apache/superset:latest}
     image: bigdata-superset:local
-    container_name: bigdata-superset-init
     depends_on:
       postgres:
         condition: service_healthy
@@ -194,7 +191,6 @@ services:
       args:
         SUPERSET_BASE: ${SUPERSET_IMAGE:-apache/superset:latest}
     image: bigdata-superset:local
-    container_name: bigdata-superset
     depends_on:
       superset-init:
         condition: service_completed_successfully
@@ -229,7 +225,6 @@ services:
     build:
       context: ./agent
     image: bigdata-agent:local
-    container_name: bigdata-agent
     restart: unless-stopped
     environment:
       AGENT_REPO_ROOT: ${PWD}

@@ -173,7 +173,41 @@ docker compose logs -f superset-init
 ```
 
 Los tres contenedores `*-init` deben terminar con estado `Exited (0)`. Cuando
-`bigdata-superset` esté `Up`, abre http://localhost:8088 (usuario `admin`, contraseña `admin`).
+`superset` esté `Up`, abre http://localhost:8088 (usuario `admin`, contraseña `admin`).
+
+### Levantar un segundo stack en otra carpeta (sin chocar)
+
+El stack es **reubicable**: puedes clonar el repo en otra carpeta y levantar un
+segundo stack en la misma máquina sin que choquen contenedores, volúmenes, red ni
+puertos. Solo tienes que cambiar el nombre del proyecto y los puertos en el `.env`
+de la copia:
+
+```bash
+git clone <url> ~/proyectos2-2
+cd ~/proyectos2-2
+cp .env.example .env
+```
+
+Edita `.env` y descomenta/ajusta el bloque de ejemplo:
+
+```dotenv
+COMPOSE_PROJECT_NAME=bigdata-stack-2
+MINIO_API_PORT=9100
+MINIO_CONSOLE_PORT=9101
+POSTGRES_PORT=5433
+TRINO_PORT=8181
+SUPERSET_PORT=8188
+AGENT_PORT=8100
+```
+
+- **`COMPOSE_PROJECT_NAME`** aísla contenedores, volúmenes y red (cada stack tiene
+  los suyos). Sin esto, ambos clones compartirían el mismo proyecto.
+- **Los puertos** deben ser distintos a los del primer stack para que no haya
+  conflicto al publicarlos en el host.
+
+Con eso, `docker compose up -d` en la segunda carpeta levanta un stack totalmente
+independiente. El primer stack sigue en http://localhost:8088 y el segundo en
+http://localhost:8188.
 
 ### Qué hace cada contenedor de inicialización
 
@@ -369,10 +403,10 @@ docker compose --profile agent down      # para el stack + el agente
 | Trino: `Access Denied` / `S3Exception` | Credenciales de `trino/catalog/hive.properties` distintas de las de MinIO |
 | `superset-init` falla con `No module named 'psycopg2'` (o `trino`) | Un `pip install` normal no toca el venv de Superset. Reconstruye: `docker compose build --no-cache superset` |
 | Superset no arranca y `superset-init` falla | Revisa `docker compose logs superset-init` (suele ser PostgreSQL aún no listo) |
-| El dataset `playas_tipadas` aparece **sin columnas** | `superset-init` leyó los metadatos antes de que Trino estuviera listo (`SERVER_STARTING_UP`). `init.sh` ya espera a que Trino ejecute `SELECT 1`, y `bootstrap.py` reintenta. Para arreglarlo sin recrear: `docker exec bigdata-superset python /app/bootstrap.py` |
-| El dashboard no aparece tras levantar el stack | Revisa `docker compose logs superset-init`; el script avisa con `AVISO: no se pudo crear el dashboard`. Relánzalo con `docker exec bigdata-superset python /app/create_dashboard.py` |
+| El dataset `playas_tipadas` aparece **sin columnas** | `superset-init` leyó los metadatos antes de que Trino estuviera listo (`SERVER_STARTING_UP`). `init.sh` ya espera a que Trino ejecute `SELECT 1`, y `bootstrap.py` reintenta. Para arreglarlo sin recrear: `docker compose exec superset python /app/bootstrap.py` |
+| El dashboard no aparece tras levantar el stack | Revisa `docker compose logs superset-init`; el script avisa con `AVISO: no se pudo crear el dashboard`. Relánzalo con `docker compose exec superset python /app/create_dashboard.py` |
 | `permission denied` al escribir el metastore | El contenedor `trino-init-meta` debe terminar OK antes de Trino |
-| Superset no conecta a Trino | Comprueba el driver **dentro del venv**: `docker exec bigdata-superset /app/.venv/bin/python -c "import trino, psycopg2; print('ok')"` |
+| Superset no conecta a Trino | Comprueba el driver **dentro del venv**: `docker compose exec superset /app/.venv/bin/python -c "import trino, psycopg2; print('ok')"` |
 | `minio-init` no ve el CSV | Debe acabar con `Exited (0)`. Si no, `docker compose logs minio-init` |
 | `python3 -m venv` falla con «ensurepip is not available» | Falta `python3-venv` en el host. Ejecuta el agente como contenedor: `docker compose --profile agent up -d --build agent` |
 | El agente dice que no encuentra el comando `docker` | Se lanzó sin el socket montado. Usa el servicio `agent` del compose (`--profile agent`), no `docker run` a mano |

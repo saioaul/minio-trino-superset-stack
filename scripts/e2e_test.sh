@@ -72,7 +72,7 @@ else
   mal "Superset no responde en http://localhost:${SUPERSET_PORT}"
 fi
 
-if docker exec bigdata-superset python -c \
+if docker compose exec -T superset python -c \
   "import sys; from superset.app import create_app; app=create_app();
 with app.app_context():
     from superset import db
